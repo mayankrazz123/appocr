@@ -1,0 +1,1 @@
+py -3.13 -m uvicorn app.news_app:app --host 0.0.0.0 --port 5000 --reload
