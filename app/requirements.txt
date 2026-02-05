@@ -14,7 +14,6 @@ numpy
 scipy
 transformers
 torch
-onnx==1.16.0
-onnxruntime==1.19.2
 pandas
 PyMySQL
+python-dotenv

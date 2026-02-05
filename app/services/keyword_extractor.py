@@ -1,6 +1,21 @@
 import re
-# Commented out HuggingFace model imports - requires authentication
-# from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
+import os
+from dotenv import load_dotenv
+from huggingface_hub import InferenceClient
+
+# Load environment variables
+load_dotenv()
+
+# Initialize HuggingFace InferenceClient
+try:
+    client = InferenceClient(
+        provider="auto",
+        api_key=os.getenv("HUGGINGFACE_TOKEN"),
+    )
+    print("HuggingFace InferenceClient initialized successfully!")
+except Exception as e:
+    print(f"Warning: Failed to initialize HuggingFace client: {e}")
+    client = None
 
 police_crime_types_input = ["पुलिस की लापरवाही", "पुलिस द्वारा अपराध", "गंभीर अपराध", "कानून व्यवस्था", "विभागीय नकारात्मक समाचार"]
 police_crime_examples = ["रिपोर्ट दर्ज न करना", "अपराधी को जानते हुए भी उसे गिरफ्तार न करना", "शिकायत पर कार्यवाही नहीं करना", "प्रार्थी/पीड़ितों/गवाहों के साथ दुर्व्यवहार", "जुआ/सट्टेबाजों को संरक्षण देना", "आपात स्थिति मे कोई प्रतिक्रिया नहीं देना", "झूठे मामले में निर्दोष के विरूद्ध कार्यवाही करना", "आरोपी के साथ अमानवीय व्यवहार", "रिश्वत/भ्रष्टाचार कर आरोपी पक्ष को लाभ पहुंचाना", "अपराध दर्ज करने के लिए पैसे की मांग करना", "कानूनी प्रक्रिया की अनदेखी करना", "न्यायालय के आदेषों का अवहेलना करना", "मादक पदार्थों की तस्करी में संलिप्तता", "गुण्डा/बदमाषों को संरक्षण देना", "पुलिस अधिकारी/कर्मचारियों द्वारा कारित अपराध", "अवैध गतिविधियों की अनदेखा करना", "साम्प्रदायिक हिंसा", "धर्मान्तरण", "अवैध/अनाधिकृत प्रवासी", "कमजोर आसूचना तंत्र", "जनता के साथ संवादहीनता", "पुलिसकर्मियों द्वारा आत्महत्या", "ट्रांसफर/पोस्टिंग से जुड़ा असंतोष", "अनुकंपा नियुक्ति नहीं मिलना", "हत्या", "बलात्कार", "डकैती", "लूट", "गैंगवार", "चाकूबाजी", "फायरिंग", "गैंगरेप", "गौ-तस्करी", "मानव तस्करी", "गुमषुदा बच्चे/महिला"]
@@ -10,6 +25,81 @@ alternative_police_crimes = ["पुलिसिया ज़्यादती"
 crimes_by_police = list(set(police_crime_types_input + police_crime_examples + additional_police_crimes + summarized_police_crimes + alternative_police_crimes))
 
 chhattisgarh_districts = ["बालोद", "बलौदाबाजार", "बलरामपुर", "बस्तर", "बेमेतरा", "बिलासपुर", "दंतेवाड़ा", "धमतरी", "दुर्ग", "गौरेला-पेंड्रा-मरवाही", "गरियाबंद", "जांजगीर-चांपा", "जशपुर", "कवर्धा", "कांकेर", "कोरबा", "कोरिया", "महासमुंद", "मुंगेली", "नारायणपुर", "रायगढ़", "रायपुर", "राजनांदगांव", "सुकमा", "सूरजपुर", "सरगुजा", "बीजापुर", "कोंडागांव", "खैरागढ़-छुईखदान-गंडई", "मोहला-मानपुर-अंबागढ़ चौकी", "सारंगढ़-बिलाईगढ़", "मनीन्द्रगढ़-चिरमिरी-भरतपुर"]
+
+chhattisgarh_police_stations = [
+  "सिविल लाइंस थाना",
+  "कोतवाली थाना",
+  "गंज थाना",
+  "खमतराई थाना",
+  "उरला थाना",
+  "आमानाका थाना",
+  "सरस्वती नगर थाना",
+  "आजाद चौक थाना",
+  "पुरानी बस्ती थाना",
+  "टिकरापारा थाना",
+  "पंडरी थाना",
+  "मौदहापारा थाना",
+  "गुढियारी थाना",
+
+  "सूरजपुर थाना",
+  "झिलमिल थाना",
+  "प्रतापपुर थाना",
+  "प्रेमनगर थाना",
+  "चंदौरा थाना",
+  "जयनगर थाना",
+  "बसदेई थाना",
+  "भटगांव थाना",
+  "खड़गंवा थाना",
+  "ओडगी थाना",
+  "चेंद्र थाना",
+
+  "बालोद थाना",
+  "गुरूर थाना",
+  "डौंडी-लोहारा थाना",
+  "डौंडी थाना",
+  "रंचिरई थाना",
+  "अरजुंदा थाना",
+  "मंगचूआ थाना",
+  "गुंडरदेही थाना",
+  "राजहरा थाना",
+  "माहामाया थाना",
+  "देवरी थाना",
+  "सुरेगांव थाना",
+  "कवर थाना",
+  "सिहावा थाना",
+
+
+  "कोत्रा रोड थाना",
+  "कोतवाल थाना",
+  "खरसिया थाना",
+  "घरघोड़ा थाना",
+  "लैलुंगा थाना",
+  "पुंजीपथरा थाना",
+  "पुस्सौर थाना",
+
+  "अवापल्ली थाना",
+  "बासगुड़ा थाना",
+  "बेडरे थाना",
+  "भद्रकाली थाना",
+  "भैरमगढ़ थाना",
+  "भोपालपाटनम थाना",
+  "बीजापुर थाना",
+  "एल्मिडी थाना",
+  "फरसेगढ़ थाना",
+  "गंगलूर थाना",
+
+  "AJK जांजगीर-चांपा",
+  "अकालतारा थाना",
+  "बालौदा थाना",
+  "बम्हणिदिह थाना",
+  "बिर्रा थाना",
+
+  "AJK कोण्डागांव थाना",
+  "बड़े डोंगर थाना",
+  "बयानार थाना",
+  "धनोरा थाना",
+  "फरासगांव थाना"
+]
 
 crime_severity_en = {"Murder": 10, "Attempt to Murder": 8, "Rape": 9, "Robbery": 7, "Assault": 5, "Theft": 3, "Other": 1}
 
@@ -55,15 +145,34 @@ occasion = {
 
 
 
-# Commented out - HuggingFace model requires authentication
-# model_name = "ai4bharat/IndicNER"
-# tokenizer = AutoTokenizer.from_pretrained(model_name)
-# model = AutoModelForTokenClassification.from_pretrained(model_name)
-# ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple")
-ner_pipeline = None  # Disabled - requires HuggingFace authentication
+
+
+
+# NER function using HuggingFace InferenceClient
+def extract_entities_with_ner(text):
+    """Extract named entities using HuggingFace InferenceClient"""
+    if not client:
+        return []
+    
+    try:
+        result = client.token_classification(
+            text,
+            model="ai4bharat/IndicNER",
+        )
+        return result
+    except Exception as e:
+        print(f"NER inference error: {e}")
+        return []
 
 # from .resources import (
 #     crime_severity_sorted,
+#     crime_type,
+#     crimes_by_police,
+#     weapons_keywords,
+#     score_match,
+#     occasion,
+#     chhattisgarh_districts
+# )
 #     crime_type,
 #     crimes_by_police,
 #     weapons_keywords,
@@ -96,8 +205,50 @@ def extract_district(text):
     return "N/A"
 
 def extract_police_station(text):
+    print(f"DEBUG: Extracting police station from text: {text[:100]}...")
+    
+    # Special handling for सिहावा - check if it appears with थाना
+    if "सिहावा" in text and "थाना" in text:
+        # Look for सिहावा within 20 characters of थाना
+        sihawa_pos = text.find("सिहावा")
+        thana_pos = text.find("थाना")
+        if abs(sihawa_pos - thana_pos) < 20:
+            print("DEBUG: Found सिहावा थाना by proximity matching")
+            return "सिहावा थाना"
+    
+    # First try to match exact police station names from the list
+    for station in chhattisgarh_police_stations:
+        if station in text:
+            print(f"DEBUG: Found exact match: {station}")
+            return station
+    
+    # Try partial matching - sometimes OCR might miss spaces or have slight variations
+    for station in chhattisgarh_police_stations:
+        station_parts = station.split()
+        for part in station_parts:
+            if part in text and len(part) > 2:  # Only match meaningful parts
+                # Check if other parts are also nearby
+                text_start = max(0, text.find(part) - 20)
+                text_end = min(len(text), text.find(part) + 50)
+                context = text[text_start:text_end]
+                if all(other_part in context for other_part in station_parts if other_part != part):
+                    print(f"DEBUG: Found partial match: {station}")
+                    return station
+    
+    # Fallback to regex pattern matching
     match = re.search(r'(थाना|चौकी)\s+([^\n।:,]*)', text)
-    return f'{match.group(1)} {match.group(2).strip()}' if match else "N/A"
+    if match:
+        station_name = f'{match.group(1)} {match.group(2).strip()}'
+        print(f"DEBUG: Regex found: {station_name}")
+        # Check if this matches any station in our list
+        for station in chhattisgarh_police_stations:
+            if station_name in station or station in station_name:
+                print(f"DEBUG: Regex matches known station: {station}")
+                return station
+        return station_name
+    
+    print("DEBUG: No police station found")
+    return "N/A"
 
 def extract_fir_number(text):
     match = re.search(r'(अपराध क्रमांक|FIR|एफआईआर)\s*[:\-]?\s*([0-9\/\-]+)', text)
@@ -112,14 +263,15 @@ def extract_accused(text):
     if match:
         name = match.group(1).split('पिता')[0].strip()
         return name
-    # NER pipeline disabled - requires HuggingFace authentication
     # Try alternative regex patterns for accused name
     match_alt = re.search(r'आरोपी\s+([^\s,।\n]+(?:\s+[^\s,।\n]+)?)', text)
     if match_alt:
         return match_alt.group(1)
-    # ner_results = ner_pipeline(text)
-    # persons = [ent['word'] for ent in ner_results if ent['entity_group'] == 'PER']
-    # return persons[0] if persons else "N/A"
+    # Use NER inference if available
+    ner_results = extract_entities_with_ner(text)
+    if ner_results:
+        persons = [ent['word'] for ent in ner_results if ent.get('entity_group') == 'PER']
+        return persons[0] if persons else "N/A"
     return "N/A"
 
 def extract_weapons(text):
