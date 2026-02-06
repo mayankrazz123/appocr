@@ -11,6 +11,7 @@ from fastapi import File, UploadFile, Form
 from dateutil import parser as dateutil_parser
 from typing import Optional
 from app.services.ocr_processor import process_base64_images
+from app.services.keyword_extractor import extract_entities_with_ner
 from fastapi import FastAPI, Query, Request, HTTPException
 from typing import Optional
 import json
@@ -474,12 +475,52 @@ async def extract_news_articles(
     
     return {"distictCd": distictCode['DISTRICT_CD'], "districtName": dsName, "psName" :psName , "accusedName" : accusedName, "complainantName":"","crimeType" :crimeType, "newsHeading":  heading, "summary": summary,"full_text":structured_articles[0]}
 
-chhattisgarh_districts = ["बालोद", "बलौदाबाजार", "बलरामपुर", "बस्तर", "बेमेतरा", "बिलासपुर", "दंतेवाड़ा", "धमतरी", "दुर्ग", "गौरेला-पेंड्रा-मरवाही", "गरियाबंद", "जांजगीर-चांपा", "जशपुर", "कवर्धा", "कांकेर", "कोरबा", "कोरिया", "महासमुंद", "मुंगेली", "नारायणपुर", "रायगढ़", "रायपुर", "राजनांदगांव", "सुकमा", "सूरजपुर", "सरगुजा", "बीजापुर", "कोंडागांव", "खैरागढ़-छुईखदान-गंडई", "मोहला-मानपुर-अंबागढ़ चौकी", "सारंगढ़-बिलाईगढ़", "मनीन्द्रगढ़-चिरमिरी-भरतपुर"]
+chhattisgarh_districts = [
+    # Hindi, English
+    ("बालोद", "Balod"),
+    ("बलौदाबाजार", "Balodabazar"),
+    ("बलरामपुर", "Balrampur"),
+    ("बस्तर", "Bastar"),
+    ("बेमेतरा", "Bemetara"),
+    ("बिलासपुर", "Bilaspur"),
+    ("दंतेवाड़ा", "Dantewada"),
+    ("धमतरी", "Dhamtari"),
+    ("दुर्ग", "Durg"),
+    ("गौरेला-पेंड्रा-मरवाही", "Gaurela Pendra Marwahi"),
+    ("गरियाबंद", "Gariaband"),
+    ("जांजगीर-चांपा", "Janjgir Champa"),
+    ("जशपुर", "Jashpur"),
+    ("कवर्धा", "Kabirdham"),
+    ("कांकेर", "Kanker"),
+    ("कोरबा", "Korba"),
+    ("कोरिया", "Korea"),
+    ("महासमुंद", "Mahasamund"),
+    ("मुंगेली", "Mungeli"),
+    ("नारायणपुर", "Narayanpur"),
+    ("रायगढ़", "Raigarh"),
+    ("रायपुर", "Raipur"),
+    ("राजनांदगांव", "Rajnandgaon"),
+    ("सुकमा", "Sukma"),
+    ("सूरजपुर", "Surajpur"),
+    ("सरगुजा", "Surguja"),
+    ("बीजापुर", "Bijapur"),
+    ("कोंडागांव", "Kondagaon"),
+    ("खैरागढ़-छुईखदान-गंडई", "Khairagarh Chhuikhadan Gandai"),
+    ("मोहला-मानपुर-अंबागढ़ चौकी", "Mohla Manpur Ambagarh Chowki"),
+    ("सारंगढ़-बिलाईगढ़", "Sarangarh Bilaigarh"),
+    ("मनीन्द्रगढ़-चिरमिरी-भरतपुर", "Manendragarh Chirmiri Bharatpur")
+]
+
 def extract_district(text):
-    for district in chhattisgarh_districts:
-        if district in text:
-            return district
-            break
+    if not text:
+        return "N/A"
+
+    text_lower = text.lower()
+
+    for hi, en in chhattisgarh_districts:
+        if hi in text or en.lower() in text_lower:
+            return hi   # always return Hindi (DB safe)
+
     return "N/A"
     
 def extract_police_station(text):
@@ -657,14 +698,28 @@ def extract_ps_keywords(structured_articles):
     return "N/A"
     
 def extract_accused(text):
-    # List of regex patterns covering different common Hindi patterns
+    # Handle list or string
+    text_str = text[0] if isinstance(text, list) else text
+
     patterns = [
+        # existing patterns
         r'गिरफ्तार आरोपी\s*-\s*([^\n]*)',
         r'आरोपी का नाम\s*[:-]?\s*([^\n]*)',
         r'आरोपी\s*[:-]?\s*([^\n]*)',
         r'संचालक\s*[:-]?\s*([^\n]*)',
-        # r'नाम\s*[:-]?\s*([^\n]*)',
-        r'अभियुक्त\s*[:-]?\s*([^\n]*)'
+        r'अभियुक्त\s*[:-]?\s*([^\n]*)',
+
+        # ✅ NEW: पुलिस ने <पद> <नाम> को हिरासत में लिया
+        r'पुलिस\s+ने\s+(?:[\u0900-\u097F]+\s+)?([^\n,।]+?)\s+को\s+हिरासत',
+
+        # ✅ NEW: पुलिस ने <नाम> को हिरासत में लिया
+        r'पुलिस\s+ने\s+([^\n,।]+?)\s+को\s+हिरासत',
+
+        # ✅ NEW: चालक <नाम>
+        r'चालक\s+([^\n,।]+)',
+
+        # ✅ NEW: <नाम> को हिरासत में लिया
+        r'([^\n,।]+?)\s+को\s+हिरासत\s+में\s+लिया'
     ]
 
     # Handle both string and list inputs
@@ -685,14 +740,26 @@ def extract_accused(text):
                 return name
 
     # Fallback: use NER (e.g., transformers pipeline)
+    # Fallback: use NER (ai4bharat/IndicNER)
     try:
-        if ner_pipeline:
-            ner_results = ner_pipeline(text_str)
-            persons = [ent['word'] for ent in ner_results if ent['entity_group'] == 'PER'] # type: ignore
+        ner_results = extract_entities_with_ner(text_str)
+        # Check if ner_results is not empty and has the expected structure
+        if ner_results:
+            # Filter for PER (Person) entities. 
+            # Note: IndicNER might return 'B-PER', 'I-PER' or just 'PER' depending on aggregation.
+            # We'll look for 'PER' in the entity group label.
+            persons = []
+            for ent in ner_results:
+                # The generic InferenceClient output often uses 'entity_group' for aggregated or 'entity' for raw
+                label = ent.get('entity_group') or ent.get('entity')
+                if label and 'PER' in label:
+                    persons.append(ent.get('word', ''))
+            
             if persons:
                 return persons[0]
-    except Exception:
-        pass  # fail silently if NER isn't available
+    except Exception as e:
+        print(f"NER fallback failed: {e}")
+        pass
 
     return "N/A"
     
@@ -729,7 +796,7 @@ def extract_crime_keywords(structured_articles):
         "मानव तस्करी", "घरेलू हिंसा", "आतंकवाद", "देशद्रोह", "धार्मिक उन्माद", "नाबालिग से दुष्कर्म", "पत्नि पर अत्याचार",
         "आत्महत्या के लिए उकसाना", "धमकी देना", "अवैध हथियार रखना", "हथियारों की तस्करी", "जुआ", "मादक पदार्थ तस्करी",
         "नशीली दवाओं की तस्करी", "तस्करी", "नक्सली", "आत्मसमर्पण", "ईनामी", "पुनर्वास नीति", "माओवाद", "गांजा", "मादक पदार्थ",
-        "एनडीपीएस", "बिक्री", "अवैध परिवहन", "नक्सलवाद", "देशद्रोह", "गौ हत्या", "गौ-तस्करी","गायो","देह व्यापार"
+        "एनडीपीएस", "बिक्री", "अवैध परिवहन", "नक्सलवाद", "देशद्रोह", "गौ हत्या", "गौ-तस्करी","गायो","देह व्यापार","जिलेटिन","डेटोनेटर"
     ]
 
     
@@ -1096,7 +1163,7 @@ def generate_final_summary(
         "मानव तस्करी", "घरेलू हिंसा", "आतंकवाद", "देशद्रोह", "धार्मिक उन्माद", "नाबालिग से दुष्कर्म", "पत्नि पर अत्याचार",
         "आत्महत्या के लिए उकसाना", "धमकी देना", "अवैध हथियार रखना", "हथियारों की तस्करी", "जुआ", "मादक पदार्थ तस्करी",
         "नशीली दवाओं की तस्करी", "तस्करी", "नक्सली", "आत्मसमर्पण", "ईनामी", "पुनर्वास नीति", "माओवाद", "गांजा", "मादक पदार्थ",
-        "एनडीपीएस", "बिक्री", "अवैध परिवहन", "नक्सलवाद", "देशद्रोह", "गौ हत्या", "गौ तस्करी"
+        "एनडीपीएस", "बिक्री", "अवैध परिवहन", "नक्सलवाद", "देशद्रोह", "गौ हत्या", "गौ तस्करी","जिलेटिन","डेटोनेटर"
     ]
 
     # Step 7: Final scoring using FIR extracted keywords
@@ -1126,7 +1193,7 @@ def extract_local_newspaper():
     try:
         # Get the path to the newspaper.jpg file
         current_dir = Path(__file__).parent
-        image_path = current_dir / "services" / "newspaper7.jpeg"
+        image_path = current_dir / "services" / "newspaper9.jpeg"
 
         if not image_path.exists():
             raise HTTPException(status_code=404, detail=f"Image file not found at {image_path}")

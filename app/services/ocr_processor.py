@@ -1,152 +1,155 @@
 import pytesseract
-from PIL import Image
 import cv2
 import numpy as np
 import base64
 import tempfile
 import re
-from PIL import Image
 import io
+from PIL import Image
 
-# Tesseract Configuration
-# For Windows, update this path to your Tesseract installation
-# Common paths: r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-# For Linux/Docker: "/usr/bin/tesseract"
+# ---------------- TESSERACT SETUP ---------------- #
 try:
-    # Try to use tesseract from PATH first
     pytesseract.get_tesseract_version()
 except:
-    # If not in PATH, set the path manually
     pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-#"custom_config = '--oem 3  --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-
-
-# Clean extracted text
-def clean_text(text):
-    #text = re.sub(r'[^ऀ-ॿa-zA-Z0-9\s।,!?%():\-–—"“”‘’\'\n]', '', text)
-    #text = re.sub(r'\s+', ' ', text)
+# ---------------- TEXT CLEANER ---------------- #
+def clean_text(text: str) -> str:
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-# Extract text from saved image file with advanced preprocessing
-def extract_text_from_image(image_path):
-    image = cv2.imread(image_path)
-    if image is None:
-        raise ValueError(f"Failed to load image from path: {image_path}")
 
-    # Convert to grayscale
+# ---------------- DESKEW IMAGE ---------------- #
+def deskew_image(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.bitwise_not(gray)
 
-    # Get original dimensions
-    height, width = gray.shape
+    thresh = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
+    )[1]
 
-    # Resize image for better OCR (scale up if too small)
-    # Tesseract works best with text height around 30-40 pixels
-    scale_factor = 2.0  # Increase resolution
-    new_width = int(width * scale_factor)
-    new_height = int(height * scale_factor)
-    resized = cv2.resize(gray, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+    coords = np.column_stack(np.where(thresh > 0))
+    if coords.size == 0:
+        return image
 
-    # Apply bilateral filter to reduce noise while keeping edges sharp
-    filtered = cv2.bilateralFilter(resized, 9, 75, 75)
+    angle = cv2.minAreaRect(coords)[-1]
+    angle = -(90 + angle) if angle < -45 else -angle
 
-    # Increase contrast using CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(filtered)
+    (h, w) = image.shape[:2]
+    center = (w // 2, h // 2)
 
-    # Apply sharpening kernel
-    kernel_sharpening = np.array([[-1, -1, -1],
-                                   [-1,  9, -1],
-                                   [-1, -1, -1]])
-    sharpened = cv2.filter2D(enhanced, -1, kernel_sharpening)
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    return cv2.warpAffine(
+        image, M, (w, h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE
+    )
 
-    # Apply Otsu's thresholding for better binarization
-    # This automatically finds the optimal threshold value
-    _, binary = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Morphological operations to clean up the image
-    # Remove small noise
-    kernel = np.ones((1, 1), np.uint8)
-    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel)
-
-    print(pytesseract.get_languages(config=''))
-
-    # Try multiple PSM modes and combine results
-    # PSM 1 = Automatic page segmentation with OSD (Orientation and Script Detection)
-    # PSM 3 = Fully automatic page segmentation (default) - best for multi-column newspaper
-    # PSM 4 = Assume a single column of text of variable sizes
-    # PSM 6 = Assume a single uniform block of text
-
-    # Use PSM 1 for better handling of complex layouts like newspapers
-    config = r'--oem 3 --psm 1'
-
-    text = pytesseract.image_to_string(cleaned, config=config, lang='hin')
-    print(text)
-    return clean_text(text)
-
-# Alternative extraction method with different preprocessing
-def extract_text_alternative(image_path):
-    """Alternative method using simpler preprocessing"""
+# ---------------- MAIN OCR (HINDI + ENGLISH) ---------------- #
+def extract_text_from_image(image_path: str) -> str:
     image = cv2.imread(image_path)
     if image is None:
-        raise ValueError(f"Failed to load image from path: {image_path}")
+        raise ValueError(f"Failed to load image: {image_path}")
+
+    # Fix rotation
+    image = deskew_image(image)
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # Scale up
+    # Scale up (VERY important for Hindi)
     scale = 2.5
-    width = int(gray.shape[1] * scale)
-    height = int(gray.shape[0] * scale)
-    resized = cv2.resize(gray, (width, height), interpolation=cv2.INTER_CUBIC)
+    gray = cv2.resize(
+        gray,
+        (int(gray.shape[1] * scale), int(gray.shape[0] * scale)),
+        interpolation=cv2.INTER_CUBIC
+    )
 
-    # Simple denoising
-    denoised = cv2.fastNlMeansDenoising(resized, None, 10, 7, 21)
+    # Noise reduction
+    denoised = cv2.fastNlMeansDenoising(gray, None, 15, 7, 21)
 
-    # Adaptive thresholding
-    binary = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                    cv2.THRESH_BINARY, 11, 2)
+    # Contrast boost
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(denoised)
 
-    # Try PSM 3 (automatic page segmentation)
-    text = pytesseract.image_to_string(binary, config=r'--oem 3 --psm 3', lang='hin')
-    return clean_text(text)
+    # Adaptive threshold (best for newspapers)
+    binary = cv2.adaptiveThreshold(
+        enhanced, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31, 11
+    )
+
+    # Morphology (safe for Hindi + English)
+    kernel = np.ones((2, 2), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
+    # Try multiple page segmentation modes
+    results = []
+    for psm in [1, 3, 4, 6]:
+        config = f'--oem 3 --psm {psm}'
+        text = pytesseract.image_to_string(
+            binary,
+            config=config,
+            lang='hin+eng'   # 🔥 THIS IS THE KEY
+        )
+        results.append(clean_text(text))
+
+    # Pick best result
+    best_text = max(results, key=lambda t: (len(t), t.count("\n")))
+    return best_text
 
 
-# Main processor for base64 images
+# ---------------- FALLBACK OCR ---------------- #
+def extract_text_alternative(image_path: str) -> str:
+    image = cv2.imread(image_path)
+    if image is None:
+        return ""
+
+    image = deskew_image(image)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    gray = cv2.resize(
+        gray,
+        (gray.shape[1] * 2, gray.shape[0] * 2),
+        interpolation=cv2.INTER_CUBIC
+    )
+
+    _, binary = cv2.threshold(
+        gray, 0, 255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    return clean_text(
+        pytesseract.image_to_string(
+            binary,
+            config='--oem 3 --psm 3',
+            lang='hin+eng'
+        )
+    )
+
+
+# ---------------- BASE64 PROCESSOR ---------------- #
 def process_base64_images(base64_image: str):
     articles = []
 
-    print('process_base64_images')
     try:
-        # PIL handles PNGs more reliably than OpenCV
-        image = Image.open(io.BytesIO(base64.decodebytes(bytes(base64_image, "utf-8")))).convert("RGB")
+        image = Image.open(
+            io.BytesIO(base64.b64decode(base64_image))
+        ).convert("RGB")
 
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmpfile:
-            image.save(tmpfile.name, format="JPEG", quality=95)  # High quality JPEG for OCR
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            image.save(tmp.name, "JPEG", quality=95)
 
-            # Try primary method
-            print("Trying primary OCR method...")
-            text1 = extract_text_from_image(tmpfile.name)
+            text1 = extract_text_from_image(tmp.name)
+            text2 = extract_text_alternative(tmp.name)
 
-            # Try alternative method
-            print("Trying alternative OCR method...")
-            text2 = extract_text_alternative(tmpfile.name)
-
-            # Choose the longer result (usually more complete)
-            if len(text2) > len(text1):
-                print(f"Using alternative method (length: {len(text2)} vs {len(text1)})")
-                text = text2
-            else:
-                print(f"Using primary method (length: {len(text1)} vs {len(text2)})")
-                text = text1
-
-            # Preserve newlines for better text structure
-            articles.append(text)
+            final_text = text2 if len(text2) > len(text1) else text1
+            articles.append(final_text)
 
     except Exception as e:
-        print(f"[ERROR] Failed processing image: {e}")
-        import traceback
-        traceback.print_exc()
+        print("[OCR ERROR]", e)
 
     return articles
